@@ -19,34 +19,62 @@ fi
 chmod 600 /etc/mongodb-keyfile
 chown mongodb /etc/mongodb-keyfile
 
-if [ "$IS_MASTER" == "true" ]; then
+# Master mode
+# Initiate new replicaSet
+if [ -z "$REPLICA_PEER" ]; then
+  echo "Starting as replicaSet PRIMARY..."
+
   # Start Mongo without options
+  echo "Starting mongo for auth configuration..."
   mongod --fork --logpath /var/log/mongodb.log
 
   # Create root user
   if [ -n "$MONGO_USER" ] && [ -n "$MONGO_PASSWORD" ]; then
+    echo "Creating root user: ${MONGO_USER}"
     mongo --eval "db.createUser({ user: '${MONGO_USER}', pwd: '${MONGO_PASSWORD}', roles: [ { role: 'root', db: 'admin' } ] })" admin
   fi
 
   # Shutdown
+  echo "Shutting down mongo..."
   mongod --shutdown
 
   # Start Mongo with replicaSet configuration
+  echo "Starting mongo for replicaSet configuration..."
   mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile
 
   # Initiate replicaSet
+  echo "Initiating replicaSet rs0 with member ${SELF_ADDRESS}"
   mongo -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.initiate({_id: 'rs0',version: 1,members: [{ _id: 0, host : '${SELF_ADDRESS}' }]})" admin
 
   # Shutdown
+  echo "Shutting down mongo..."
   mongod --shutdown
 
   # Echo initialization logs
   cat /var/log/mongodb.log
 fi
 
+# Slave mode
 # Auto-register slave to master
-if [ "$IS_MASTER" != "true" ] && [ -n "$REPLICA_MASTER" ]; then
-  mongo -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.add('${SELF_ADDRESS}')" $REPLICA_MASTER/admin
+if [ -n "$REPLICA_PEER" ]; then
+  echo "Starting as replicaSet SECONDARY..."
+
+  # Get master
+  echo "Retrieving replicaSet master..."
+  master_address=`mongo --quiet -u root -p changeme --eval "rs.isMaster().primary" $REPLICA_PEER/admin`
+  echo "ReplicaSet master is: ${master_address}"
+
+  # Start Mongo with replicaSet configuration
+  echo "Starting mongo for replicaSet configuration..."
+  mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile
+
+  # Add self to replicaSet via master
+  echo "Register replicaSet member: ${SELF_ADDRESS}"
+  mongo -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.add('${SELF_ADDRESS}')" $master_address/admin
+
+  # Shutdown
+  echo "Shutting down mongo..."
+  mongod --shutdown
 fi
 
 # allow the container to be started with `--user`
@@ -63,3 +91,5 @@ if [ "$1" = 'mongod' ]; then
 fi
 
 exec "$@"
+
+echo "SHUTTING DOWN"
