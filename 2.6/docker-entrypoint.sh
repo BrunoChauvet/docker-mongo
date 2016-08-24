@@ -4,15 +4,17 @@
 # Set default variables
 export MONGO_USER=${MONGO_USER:-root}
 export MONGO_PASSWORD=${MONGO_PASSWORD:-changeme}
-export SELF_ADDRESS=${SELF_ADDRESS:-localhost:27017}
+export SELF_HOST=${SELF_HOST:-localhost}
+export SELF_PORT=${SELF_PORT:-27017}
+export SELF_ADDRESS="${SELF_HOST}:${SELF_PORT}"
 
 if [ "${1:0:1}" = '-' ]; then
   set -- mongod "$@"
 fi
 
 # Generate keyfile
-if [ -n "$REP_KEY" ]; then
-  echo $REP_KEY > /etc/mongodb-keyfile
+if [ -n "$MONGO_REP_KEY" ]; then
+  echo $MONGO_REP_KEY > /etc/mongodb-keyfile
 else
   cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1 > /etc/mongodb-keyfile
 fi
@@ -21,7 +23,7 @@ chown mongodb /etc/mongodb-keyfile
 
 # Master mode
 # Initiate new replicaSet
-if [ -z "$REPLICA_PEER" ]; then
+if [ -z "$MONGO_REP_PEER" ]; then
   echo "Starting as replicaSet PRIMARY..."
 
   # Start Mongo without options
@@ -56,12 +58,12 @@ fi
 
 # Slave mode
 # Auto-register slave to master
-if [ -n "$REPLICA_PEER" ]; then
+if [ -n "$MONGO_REP_PEER" ]; then
   echo "Starting as replicaSet SECONDARY..."
 
   # Get master
   echo "Retrieving replicaSet master..."
-  master_address=`mongo --quiet -u root -p changeme --eval "rs.isMaster().primary" $REPLICA_PEER/admin`
+  master_address=`mongo --quiet -u root -p changeme --eval "rs.isMaster().primary" $MONGO_REP_PEER/admin`
   echo "ReplicaSet master is: ${master_address}"
 
   # Start Mongo with replicaSet configuration
