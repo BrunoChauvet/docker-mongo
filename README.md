@@ -19,7 +19,7 @@ docker run -d -p $PORT_NODE_1:27017 \
 
 # Launch first replica
 docker run -d -p $PORT_NODE_2:27017 \
-  -e REPLICA_PEER=$PEER \
+  -e MONGO_REP_PEER=$PEER \
   -e SELF_HOST=$HOST_PUB_IP \
   -e SELF_PORT:$PORT_NODE_2 \
   -e MONGO_REP_KEY=$REP_KEY \
@@ -27,7 +27,7 @@ docker run -d -p $PORT_NODE_2:27017 \
 
 # Launch second replica
 docker run -d -p $PORT_NODE_3:27017 \
-  -e REPLICA_PEER=$PEER \
+  -e MONGO_REP_PEER=$PEER \
   -e SELF_HOST=$HOST_PUB_IP \
   -e SELF_PORT:$PORT_NODE_3 \
   -e MONGO_REP_KEY=$REP_KEY \
