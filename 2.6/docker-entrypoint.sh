@@ -23,7 +23,7 @@ chown mongodb /etc/mongodb-keyfile
 
 # Master mode
 # Initiate new replicaSet
-if [ -z "$MONGO_REP_PEER" ]; then
+if [ -z "$MONGO_REP_PEERS" ] || [ "$MONGO_REP_PEERS" = "$SELF_ADDRESS" ]; then
   echo "Starting as replicaSet PRIMARY..."
 
   # Start Mongo without options
@@ -54,16 +54,22 @@ if [ -z "$MONGO_REP_PEER" ]; then
 
   # Echo initialization logs
   cat /var/log/mongodb.log
-fi
 
-# Slave mode
-# Auto-register slave to master
-if [ -n "$MONGO_REP_PEER" ]; then
+else
+  # Slave mode
+  # Auto-register slave to master
   echo "Starting as replicaSet SECONDARY..."
+
+  # Transform comma separated list of peers into an array
+  arr_peers=(${MONGO_REP_PEERS//,/ })
 
   # Get master
   echo "Retrieving replicaSet master..."
-  master_address=`mongo --quiet -u root -p changeme --eval "rs.isMaster().primary" $MONGO_REP_PEER/admin`
+  for peer in "${arr_peers[@]}"; do
+    [ "$peer" == "$SELF_ADDRESS" ] && continue # do not query self for master
+    master_address=`mongo --quiet -u root -p changeme --eval "rs.isMaster().primary" $peer/admin`
+    [ "$?" == "0" ] && break # break immediately on success
+  done
   echo "ReplicaSet master is: ${master_address}"
 
   # Start Mongo with replicaSet configuration
