@@ -93,5 +93,3 @@ if [ "$1" = 'mongod' ]; then
 fi
 
 exec "$@"
-
-echo "SHUTTING DOWN"
