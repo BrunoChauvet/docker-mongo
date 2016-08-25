@@ -67,7 +67,7 @@ else
   echo "Retrieving replicaSet master..."
   for peer in "${arr_peers[@]}"; do
     [ "$peer" == "$SELF_ADDRESS" ] && continue # do not query self for master
-    master_address=`mongo --quiet -u root -p changeme --eval "rs.isMaster().primary" $peer/admin`
+    master_address=`mongo --quiet -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.isMaster().primary" $peer/admin`
     [ "$?" == "0" ] && break # break immediately on success
   done
   echo "ReplicaSet master is: ${master_address}"
