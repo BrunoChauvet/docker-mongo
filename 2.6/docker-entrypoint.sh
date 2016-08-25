@@ -28,7 +28,7 @@ if [ -z "$MONGO_REP_PEERS" ] || [ "$MONGO_REP_PEERS" = "$SELF_ADDRESS" ]; then
 
   # Start Mongo without options
   echo "Starting mongo for auth configuration..."
-  mongod --fork --logpath /var/log/mongodb.log
+  mongod --fork --logpath /var/log/mongodb.log --smallfiles
 
   # Create root user
   if [ -n "$MONGO_USER" ] && [ -n "$MONGO_PASSWORD" ]; then
@@ -42,7 +42,7 @@ if [ -z "$MONGO_REP_PEERS" ] || [ "$MONGO_REP_PEERS" = "$SELF_ADDRESS" ]; then
 
   # Start Mongo with replicaSet configuration
   echo "Starting mongo for replicaSet configuration..."
-  mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile
+  mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile --smallfiles
 
   # Initiate replicaSet
   echo "Initiating replicaSet rs0 with member ${SELF_ADDRESS}"
@@ -74,7 +74,7 @@ else
 
   # Start Mongo with replicaSet configuration
   echo "Starting mongo for replicaSet configuration..."
-  mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile
+  mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile --smallfiles
 
   # Add self to replicaSet via master
   echo "Register replicaSet member: ${SELF_ADDRESS}"
