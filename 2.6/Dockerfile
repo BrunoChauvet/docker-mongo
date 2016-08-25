@@ -6,4 +6,4 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 EXPOSE 27017
-CMD ["mongod", "--auth", "--replSet", "rs0", "--keyFile", "/etc/mongodb-keyfile"]
+CMD ["mongod", "--auth", "--replSet", "rs0", "--keyFile", "/etc/mongodb-keyfile", "--smallfiles"]
