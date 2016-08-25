@@ -13,7 +13,7 @@ PEER=$HOST_PUB_IP:$PORT_NODE_1
 # Launch master
 docker run -d -p $PORT_NODE_1:27017 \
   -e SELF_HOST=$HOST_PUB_IP \
-  -e SELF_PORT:$PORT_NODE_1 \
+  -e SELF_PORT=$PORT_NODE_1 \
   -e MONGO_REP_KEY=$REP_KEY \
   maestrano/mongo
 
@@ -21,15 +21,15 @@ docker run -d -p $PORT_NODE_1:27017 \
 docker run -d -p $PORT_NODE_2:27017 \
   -e MONGO_REP_PEERS=$PEER \
   -e SELF_HOST=$HOST_PUB_IP \
-  -e SELF_PORT:$PORT_NODE_2 \
+  -e SELF_PORT=$PORT_NODE_2 \
   -e MONGO_REP_KEY=$REP_KEY \
   maestrano/mongo
 
 # Launch second replica
 docker run -d -p $PORT_NODE_3:27017 \
-  -e MONGO_REP_PEERS=$PEER \
+  -e MONGO_REP_PEERS=$HOST_PUB_IP:$PORT_NODE_2,$PEER \
   -e SELF_HOST=$HOST_PUB_IP \
-  -e SELF_PORT:$PORT_NODE_3 \
+  -e SELF_PORT=$PORT_NODE_3 \
   -e MONGO_REP_KEY=$REP_KEY \
   maestrano/mongo
 ```
