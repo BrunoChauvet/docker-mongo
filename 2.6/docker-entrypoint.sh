@@ -7,10 +7,7 @@ export MONGO_PASSWORD=${MONGO_PASSWORD:-changeme}
 export SELF_HOST=${SELF_HOST:-localhost}
 export SELF_PORT=${SELF_PORT:-27017}
 export SELF_ADDRESS="${SELF_HOST}:${SELF_PORT}"
-
-if [ "${1:0:1}" = '-' ]; then
-  set -- mongod "$@"
-fi
+export MONGO_OPTS="--smallfiles --oplogSize 100"
 
 # Generate keyfile
 if [ -n "$MONGO_REP_KEY" ]; then
@@ -28,7 +25,7 @@ if [ -z "$MONGO_REP_PEERS" ] || [ "$MONGO_REP_PEERS" = "$SELF_ADDRESS" ]; then
 
   # Start Mongo without options
   echo "Starting mongo for auth configuration..."
-  mongod --fork --logpath /var/log/mongodb.log --smallfiles
+  mongod --fork --logpath /var/log/mongodb.log $MONGO_OPTS
 
   # Create root user
   if [ -n "$MONGO_USER" ] && [ -n "$MONGO_PASSWORD" ]; then
@@ -42,7 +39,7 @@ if [ -z "$MONGO_REP_PEERS" ] || [ "$MONGO_REP_PEERS" = "$SELF_ADDRESS" ]; then
 
   # Start Mongo with replicaSet configuration
   echo "Starting mongo for replicaSet configuration..."
-  mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile --smallfiles
+  mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile $MONGO_OPTS
 
   # Initiate replicaSet
   echo "Initiating replicaSet rs0 with member ${SELF_ADDRESS}"
@@ -74,7 +71,7 @@ else
 
   # Start Mongo with replicaSet configuration
   echo "Starting mongo for replicaSet configuration..."
-  mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile --smallfiles
+  mongod --fork --logpath /var/log/mongodb.log --replSet rs0 --keyFile /etc/mongodb-keyfile $MONGO_OPTS
 
   # Add self to replicaSet via master
   echo "Register replicaSet member: ${SELF_ADDRESS}"
@@ -83,6 +80,11 @@ else
   # Shutdown
   echo "Shutting down mongo..."
   mongod --shutdown
+fi
+
+# Execute options directly
+if [ "${1:0:1}" = '-' ]; then
+  set -- mongod "$@"
 fi
 
 # allow the container to be started with `--user`
