@@ -44,14 +44,16 @@ if [ -z "$MONGO_REP_PEERS" ] || [ "$MONGO_REP_PEERS" = "$SELF_ADDRESS" ]; then
   # Initiate replicaSet
   echo "Initiating replicaSet rs0 with member ${SELF_ADDRESS}"
   mongo -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.initiate({_id: 'rs0',version: 1,members: [{ _id: 0, host : '${SELF_ADDRESS}' }]})" admin
+  sleep 5
 
   # Shutdown
   echo "Shutting down mongo..."
   mongod --shutdown
 
   # Echo initialization logs
+  echo "---------------- Initialization logs ------------------------"
   cat /var/log/mongodb.log
-
+  echo "-------------------------------------------------------------"
 else
   # Slave mode
   # Auto-register slave to master
@@ -62,10 +64,26 @@ else
 
   # Get master
   echo "Retrieving replicaSet master..."
-  for peer in "${arr_peers[@]}"; do
-    [ "$peer" == "$SELF_ADDRESS" ] && continue # do not query self for master
-    master_address=`mongo --quiet -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.isMaster().primary" $peer/admin`
-    [ "$?" == "0" ] && break # break immediately on success
+  for trycount in 1 2 3 4; do
+    retval=
+    master_address=
+
+    # Try each peer
+    for peer in "${arr_peers[@]}"; do
+      [ "$peer" == "$SELF_ADDRESS" ] && continue # do not query self for master
+      master_address=`mongo --quiet -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.isMaster().primary" $peer/admin`
+      retval=$?
+      [ "$retval" == "0" ] && break # break immediately on success
+    done
+
+    # Break or retry
+    if [ -n "$master_address" ] && [ "$retval" == "0" ]; then
+      break
+    else
+      [ $trycount -gt 4 ] && exit 1
+      echo "Unable to retrieve master. Retrying in 10s (try ${trycount}/4)"
+      sleep 10
+    fi
   done
   echo "ReplicaSet master is: ${master_address}"
 
@@ -75,7 +93,11 @@ else
 
   # Add self to replicaSet via master
   echo "Register replicaSet member: ${SELF_ADDRESS}"
-  mongo -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.add('${SELF_ADDRESS}')" $master_address/admin
+  for trycount in 1 2 3 4; do
+    mongo -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.add('${SELF_ADDRESS}')" $master_address/admin
+    [ "$?" == "0" ] && break # break immediately on success
+    [ $trycount -gt 4 ] && exit 1
+  done
 
   # Shutdown
   echo "Shutting down mongo..."
@@ -87,12 +109,6 @@ if [ "${1:0:1}" = '-' ]; then
   set -- mongod "$@"
 fi
 
-# allow the container to be started with `--user`
-if [ "$1" = 'mongod' -a "$(id -u)" = '0' ]; then
-  chown -R mongodb /data/configdb /data/db
-  exec gosu mongodb "$BASH_SOURCE" "$@"
-fi
-
 if [ "$1" = 'mongod' ]; then
   numa='numactl --interleave=all'
   if $numa true &> /dev/null; then
@@ -100,4 +116,11 @@ if [ "$1" = 'mongod' ]; then
   fi
 fi
 
-exec "$@"
+# allow the container to be started with `--user`
+if [ "$1" = 'mongod' -a "$(id -u)" = '0' ]; then
+  echo "Executing CMD as mongodb user"
+  chown -R mongodb /data/configdb /data/db
+  exec gosu mongodb "$@"
+else
+  exec "$@"
+fi
