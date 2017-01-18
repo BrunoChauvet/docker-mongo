@@ -1,0 +1,201 @@
+---
+sudo: required
+dist: trusty
+
+services:
+  - docker
+
+script:
+  # Build docker image
+  - cd 2.6/
+  - docker build -t maestrano/mongo:travis . > /dev/null 2>&1
+
+  # Create volumes
+  - mkdir -p vol-m0 vol-m1 vol-m2
+
+  # Configuration
+  - HOST_PUB_IP=$(ip route get 8.8.8.8 | awk '{print $NF; exit}')
+  - PORT_NODE_0=33000
+  - VOL_NODE_0=$(pwd)/vol-m0
+  - PORT_NODE_1=33001
+  - VOL_NODE_1=$(pwd)/vol-m1
+  - PORT_NODE_2=33002
+  - VOL_NODE_2=$(pwd)/vol-m2
+  - PORT_NODE_3=33005
+  - VOL_NODE_3=$(pwd)/vol-m3
+  - CLUSTER_CONFIG=$HOST_PUB_IP:$PORT_NODE_1:1,$HOST_PUB_IP:$PORT_NODE_2:2
+
+  #============================================================================
+  # Test standalone Mongo
+  #============================================================================
+  # Start standalone instance
+  - docker run -d -p $PORT_NODE_0:27017 -v $VOL_NODE_0:/data -e MONGO_USER=root -e MONGO_PASSWORD=root --name m0 maestrano/mongo:travis
+  - sleep 5
+
+  # Wait for standalone instance to be up
+  - for i in {30..0}; do mongo -u root -p root --quiet --eval 'rs.isMaster().ok' $HOST_PUB_IP:$PORT_NODE_0/admin &> /dev/null && break; sleep 1; done
+  - if [ "$i" = 0 ]; then echo 'Mongo startup process failed.'; exit 1; fi
+
+  # Create data
+  - mongo -u root -p root --authenticationDatabase admin --quiet --eval 'db.createCollection("dummy")' $HOST_PUB_IP:$PORT_NODE_0/app_db
+  - "mongo -u root -p root --authenticationDatabase admin --quiet --eval 'for(i=1;i<=10;i++) { db.dummy.insert({score: Math.round(Math.random()*10000)}) }' $HOST_PUB_IP:$PORT_NODE_0/app_db"
+  - "record_count=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_0/app_db)"
+  - '[ "$record_count" == "10" ]'
+
+  # Perform successive backups
+  - for i in {30..0}; do docker exec -it m0 /usr/local/bin/backup.sh > /dev/null; sleep 1; done
+
+  # Check that only 20 backups are kept
+  - "bkup_count=$(docker exec -it m0 ls -l /data/backups | grep tar.gz | wc -l)"
+  - '[ "$bkup_count" == "20" ]'
+
+  # Perform recovery and check integrity
+  - docker exec -it m0 mkdir -p /tmp/restore
+  - docker exec -it m0 bash -c "tar -C /tmp/restore -xvzf \$(ls -1r /data/backups/*.tar.gz | head -n 1)"
+  - docker exec -it m0 mongorestore -u root -p root --drop /tmp/restore
+  - "record_count=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_0/app_db)"
+  - '[ "$record_count" == "10" ]'
+
+  # Destroy container
+  - docker rm -f m0
+
+  #============================================================================
+  # Test Mongo cluster
+  #============================================================================
+  # Launch instance 1 (initial master)
+  - docker run -d -p $PORT_NODE_0:27017 -v $VOL_NODE_0:/data -e MONGO_USER=root -e MONGO_PASSWORD=root -e MONGO_REP_KEY=somekey -e SELF_HOST=$HOST_PUB_IP -e SELF_PORT=$PORT_NODE_0 --name m0 maestrano/mongo:travis
+  - sleep 5
+
+  # Wait for instance 1 to be ready
+  - for i in {30..0}; do mongo -u root -p root --quiet --eval 'rs.isMaster().ok' $HOST_PUB_IP:$PORT_NODE_0/admin &> /dev/null && break; sleep 1; done
+  - if [ "$i" = 0 ]; then echo 'Mongo startup process failed.'; exit 1; fi
+
+  # Create data
+  - mongo -u root -p root --authenticationDatabase admin --quiet --eval 'db.createCollection("dummy")' $HOST_PUB_IP:$PORT_NODE_0/app_db
+  - "mongo -u root -p root --authenticationDatabase admin --quiet --eval 'for(i=1;i<=10;i++) { db.dummy.insert({score: Math.round(Math.random()*10000)}) }' $HOST_PUB_IP:$PORT_NODE_0/app_db"
+  - "record_count=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_0/app_db)"
+  - '[ "$record_count" == "10" ]'
+
+  # Create instance 2 and insert data on instance 1 in parallel
+  - docker run -d -p $PORT_NODE_1:27017 -v $VOL_NODE_1:/data -e MONGO_REP_PEERS=$HOST_PUB_IP:$PORT_NODE_0 -e MONGO_USER=root -e MONGO_PASSWORD=root -e MONGO_REP_KEY=somekey -e SELF_HOST=$HOST_PUB_IP -e SELF_PORT=$PORT_NODE_1 --name m1 maestrano/mongo:travis
+  - sleep 30
+  - "mongo -u root -p root --authenticationDatabase admin --quiet --eval 'for(i=1;i<=10000;i++) { db.dummy.insert({score: Math.round(Math.random()*10000)}) }' $HOST_PUB_IP:$PORT_NODE_0/app_db"
+
+  # Wait for instance 2 to be ready
+  - for i in {30..0}; do mongo -u root -p root --quiet --eval 'rs.isMaster().ok' $HOST_PUB_IP:$PORT_NODE_1/admin &> /dev/null && break; sleep 1; done
+  - if [ "$i" = 0 ]; then echo 'Mongo startup process failed.'; exit 1; fi
+
+  # Allow reads from secondary instance
+  - mongo -u root -p root --quiet --eval 'rs.slaveOk()' $HOST_PUB_IP:$PORT_NODE_1/admin
+
+  # Ensure replicaset is composed of two members
+  - "rs_count=$(mongo -u root -p root --quiet --eval 'rs.status().members.length' $HOST_PUB_IP:$PORT_NODE_0/admin)"
+  - '[ "$rs_count" == "2" ]'
+
+  # Ensure counts are equal
+  - "count_node_1=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_0/app_db)"
+  - "count_node_2=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_1/app_db)"
+  - '[ $count_node_1 -eq $count_node_2 ]'
+  - last_count=$count_node_1
+
+  # Create instance 3 and insert data on instance 1 in parallel
+  # Note: the discovery peer specified here is instance 2 / we check that the cluster is self-aware
+  - docker run -d -p $PORT_NODE_2:27017 -v $VOL_NODE_2:/data -e MONGO_REP_PEERS=$HOST_PUB_IP:$PORT_NODE_1 -e MONGO_USER=root -e MONGO_PASSWORD=root -e MONGO_REP_KEY=somekey -e SELF_HOST=$HOST_PUB_IP -e SELF_PORT=$PORT_NODE_2 --name m2 maestrano/mongo:travis
+  - sleep 30
+  - "mongo -u root -p root --authenticationDatabase admin --quiet --eval 'for(i=1;i<=10000;i++) { db.dummy.insert({score: Math.round(Math.random()*10000)}) }' $HOST_PUB_IP:$PORT_NODE_0/app_db"
+
+  # Wait for instance 3 to be ready
+  - for i in {30..0}; do mongo -u root -p root --quiet --eval 'rs.isMaster().ok' $HOST_PUB_IP:$PORT_NODE_2/admin &> /dev/null && break; sleep 1; done
+  - if [ "$i" = 0 ]; then echo 'Mongo startup process failed.'; exit 1; fi
+
+  # Ensure replicaset is composed of three members
+  - "rs_count=$(mongo -u root -p root --quiet --eval 'rs.status().members.length' $HOST_PUB_IP:$PORT_NODE_0/admin)"
+  - '[ "$rs_count" == "3" ]'
+
+  # Ensure counts are equal
+  - "count_node_1=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_0/app_db)"
+  - "count_node_2=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_1/app_db)"
+  - "count_node_3=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_2/app_db)"
+  - '[ $count_node_1 -eq $count_node_2 ]'
+  - '[ $count_node_1 -eq $count_node_3 ]'
+  - '[ $count_node_1 -gt $last_count ]'
+  - last_count=$count_node_1
+
+  # Keep inserting data
+  - "mongo -u root -p root --authenticationDatabase admin --quiet --eval 'for(i=1;i<=10000;i++) { db.dummy.insert({score: Math.round(Math.random()*10000)}) }' $HOST_PUB_IP:$PORT_NODE_0/app_db"
+
+  # Ensure counts are equal
+  - "count_node_1=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_0/app_db)"
+  - "count_node_2=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_1/app_db)"
+  - "count_node_3=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_2/app_db)"
+  - '[ $count_node_1 -eq $count_node_2 ]'
+  - '[ $count_node_1 -eq $count_node_3 ]'
+  - '[ $count_node_1 -gt $last_count ]'
+  - last_count=$count_node_1
+
+  #============================================================================
+  # Test Mongo cluster: Stop/Start instance 3
+  #============================================================================
+  - docker stop m2
+  - "mongo -u root -p root --authenticationDatabase admin --quiet --eval 'for(i=1;i<=10000;i++) { db.dummy.insert({score: Math.round(Math.random()*10000)}) }' $HOST_PUB_IP:$PORT_NODE_0/app_db"
+  - docker start m2
+  - sleep 10
+  - "mongo -u root -p root --authenticationDatabase admin --quiet --eval 'for(i=1;i<=10000;i++) { db.dummy.insert({score: Math.round(Math.random()*10000)}) }' $HOST_PUB_IP:$PORT_NODE_0/app_db"
+
+  # Wait for instance 3 to be ready
+  - for i in {30..0}; do mongo -u root -p root --quiet --eval 'rs.isMaster().ok' $HOST_PUB_IP:$PORT_NODE_2/admin &> /dev/null && break; sleep 1; done
+  - if [ "$i" = 0 ]; then echo 'Mongo startup process failed.'; exit 1; fi
+
+  # Ensure replicaset is composed of three members
+  - "rs_count=$(mongo -u root -p root --quiet --eval 'rs.status().members.length' $HOST_PUB_IP:$PORT_NODE_0/admin)"
+  - '[ "$rs_count" == "3" ]'
+
+  # Ensure counts are equal
+  - "count_node_1=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_0/app_db)"
+  - "count_node_2=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_1/app_db)"
+  - "count_node_3=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_2/app_db)"
+  - '[ $count_node_1 -eq $count_node_2 ]'
+  - '[ $count_node_1 -eq $count_node_3 ]'
+  - '[ $count_node_1 -gt $last_count ]'
+  - last_count=$count_node_1
+
+  #============================================================================
+  # Test Mongo cluster: Destroy initial master and re-create the instance
+  #============================================================================
+  # Delete instance 1 (initial master) and give some time to the master
+  # to settle
+  - docker rm -f m0
+  - sleep 10
+
+  # Retrieve current master
+  - mongo_master=$(mongo -u root -p root --quiet --eval 'rs.isMaster().primary' $HOST_PUB_IP:$PORT_NODE_1/admin)
+
+  # Insert data on new master
+  - "mongo -u root -p root --authenticationDatabase admin --quiet --eval 'for(i=1;i<=10000;i++) { db.dummy.insert({score: Math.round(Math.random()*10000)}) }' $mongo_master/app_db"
+
+  # Ensure counts are equal
+  - "count_node_2=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_1/app_db)"
+  - "count_node_3=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_2/app_db)"
+  - '[ $count_node_2 -eq $count_node_3 ]'
+  - '[ $count_node_2 -gt $last_count ]'
+  - last_count=$count_node_2
+
+  # Re-create instance 1
+  - docker run -d -p $PORT_NODE_0:27017 -v $VOL_NODE_0:/data -e MONGO_REP_PEERS=$mongo_master -e MONGO_USER=root -e MONGO_PASSWORD=root -e MONGO_REP_KEY=somekey -e SELF_HOST=$HOST_PUB_IP -e SELF_PORT=$PORT_NODE_0 --name m0 maestrano/mongo:travis
+  - sleep 30
+
+  # Keep inserting data
+  - "mongo -u root -p root --authenticationDatabase admin --quiet --eval 'for(i=1;i<=10000;i++) { db.dummy.insert({score: Math.round(Math.random()*10000)}) }' $mongo_master/app_db"
+
+  # Wait for instance 1 to be ready
+  - for i in {30..0}; do mongo -u root -p root --quiet --eval 'rs.isMaster().ok' $HOST_PUB_IP:$PORT_NODE_0/admin &> /dev/null && break; sleep 1; done
+  - if [ "$i" = 0 ]; then echo 'Mongo startup process failed.'; exit 1; fi
+
+  # Ensure counts are equal
+  - "count_node_1=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_0/app_db)"
+  - "count_node_2=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_1/app_db)"
+  - "count_node_3=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'rs.slaveOk();db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_2/app_db)"
+  - '[ $count_node_1 -eq $count_node_2 ]'
+  - '[ $count_node_1 -eq $count_node_3 ]'
+  - '[ $count_node_1 -gt $last_count ]'
+  - last_count=$count_node_1

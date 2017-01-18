@@ -1,8 +1,11 @@
 FROM mongo:2.6
 
+# Point-in-time backup script with backup rotation
+COPY backup.sh /usr/local/bin/
+
 # Entrypoint command
 COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/*
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 EXPOSE 27017
