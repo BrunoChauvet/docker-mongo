@@ -3,8 +3,8 @@ FROM mongo:2.6
 # Point-in-time backup script with backup rotation
 COPY backup.sh /usr/local/bin/
 
-# Extend mountable directory
-VOLUME ["/data"]
+# Persistent folders
+VOLUME ["/data","/snapshots"]
 
 # Entrypoint command
 COPY docker-entrypoint.sh /usr/local/bin/
