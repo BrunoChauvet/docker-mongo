@@ -46,12 +46,12 @@ script:
   - for i in {30..0}; do docker exec -it m0 /usr/local/bin/backup.sh > /dev/null; sleep 1; done
 
   # Check that only 20 backups are kept
-  - "bkup_count=$(docker exec -it m0 ls -l /data/backups | grep tar.gz | wc -l)"
+  - "bkup_count=$(docker exec -it m0 ls -l /snapshots | grep tar.gz | wc -l)"
   - '[ "$bkup_count" == "20" ]'
 
   # Perform recovery and check integrity
   - docker exec -it m0 mkdir -p /tmp/restore
-  - docker exec -it m0 bash -c "tar -C /tmp/restore -xvzf \$(ls -1r /data/backups/*.tar.gz | head -n 1)"
+  - docker exec -it m0 bash -c "tar -C /tmp/restore -xvzf \$(ls -1r /snapshots/*.tar.gz | head -n 1)"
   - docker exec -it m0 mongorestore -u root -p root --drop /tmp/restore
   - "record_count=$(mongo -u root -p root --authenticationDatabase admin --quiet --eval 'db.dummy.count()' $HOST_PUB_IP:$PORT_NODE_0/app_db)"
   - '[ "$record_count" == "10" ]'
