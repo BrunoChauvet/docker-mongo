@@ -14,7 +14,7 @@ mkdir -p $BKUP_DIR
 
 # Perform backup
 ts=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
-mkdir -p $BKUP_DIR/$ts
+mkdir -p /tmp/$ts
 mongodump -u $MONGO_USER -p $MONGO_PASSWORD --oplog --out /tmp/$ts/
 tar -zcvf /tmp/$ts.tar.gz /tmp/$ts/
 rm -rf /tmp/$ts
