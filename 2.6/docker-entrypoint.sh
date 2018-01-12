@@ -9,6 +9,15 @@ export SELF_PORT=${SELF_PORT:-27017}
 export SELF_ADDRESS="${SELF_HOST}:${SELF_PORT}"
 export MONGO_OPTS="--smallfiles --oplogSize 100"
 
+function shutdownServer {
+  echo "GRACEFULLY SHUTDOWN SERVER"
+  mongo -u $MONGO_USER -p $MONGO_PASSWORD --eval "db.getSiblingDB('admin').shutdownServer()" admin
+  mongo -u $MONGO_USER -p $MONGO_PASSWORD --eval "rs.remove('$SELF_ADDRESS')" admin
+}
+
+# Gracefully shutdown replica set when stopping container
+trap shutdownServer SIGTERM
+
 # Generate keyfile
 if [ -n "$MONGO_REP_KEY" ]; then
   echo $MONGO_REP_KEY > /etc/mongodb-keyfile
